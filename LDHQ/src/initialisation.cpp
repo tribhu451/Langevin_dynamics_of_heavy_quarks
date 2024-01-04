@@ -1,0 +1,512 @@
+#include "initialisation.h"
+
+initialisation::initialisation(input_paramters &iparam_):iparam(iparam_){
+  ncoll_profile_filename = iparam.ncoll_prof_file.c_str();
+  glauber_input_filename = iparam.glauber_input_file.c_str() ; 
+
+  rand = new random_gen();
+  rand2 = new random_gen();
+
+  std::string dummy ;
+  int temp_nx ; 
+  int temp_ny ; 
+  double temp_dx ; 
+  double temp_dy ;
+  double temp_xmin ;  
+  double temp_ymin ;  
+
+  std::ifstream ifile;
+  ifile.open(ncoll_profile_filename.c_str(), std::ios::in );
+  if(!ifile){
+    std::cout << "bulk information input" <<
+    " file not found ... " << std::endl ; 
+    exit(1);
+  }
+  else{
+    std::cout << "ncoll profile file : " << ncoll_profile_filename.c_str() << std::endl ;  
+  }
+  ifile.getline(buff,350);
+  iss = new istringstream(buff);
+
+  *iss >> dummy >> dummy >> dummy 
+       >> dummy >> dummy >> dummy 
+       >> temp_nx >> dummy >> temp_ny 
+       >> dummy >> dummy >> dummy
+       >> temp_dx >> dummy >> temp_dy ;
+  delete iss;
+
+  nx     =  temp_nx ; 
+  ny     =  temp_ny ;
+  dx     =  temp_dx ;
+  dy     =  temp_dy ;
+
+  std::cout << "Input Glauber Profile discretization ... " << std::endl ; 
+  std::cout << "nx   = " << nx << std::endl ; 
+  std::cout << "ny   = " << ny << std::endl ; 
+  std::cout << "dx   = " << dx << std::endl ; 
+  std::cout << "dy   = " << dy << std::endl ; 
+
+  ifile.getline(buff,350);
+  iss = new istringstream(buff);
+  *iss >> dummy >> temp_xmin >> temp_ymin >> dummy >> dummy >>
+          dummy >> dummy >> dummy >> dummy >> dummy >> dummy >> 
+          dummy >> dummy >> dummy >> dummy >> dummy >> dummy ; 
+  delete iss;
+
+  xmin = temp_xmin ;
+  ymin = temp_ymin ;
+
+  std::cout << "xmin   = " << xmin << std::endl ; 
+  std::cout << "ymin   = " << ymin << std::endl ; 
+  std::cout << "==============" << std::endl ; 
+  ifile.close();
+
+  //dynamically allocating array
+  ncollxy = new double* [nx];
+  for(int ix = 0; ix < nx; ix++){
+    // Declare a memory block
+    // of size ny
+    ncollxy[ix] = new double[ny];
+  }
+  for(int ix = 0; ix < nx; ix++){
+    for(int iy = 0; iy < ny; iy++){
+      ncollxy[ix][iy] = 0.0;
+    } 
+  } 
+
+
+
+  // read for rapidity extension //
+  std::string a_; char a[50];
+  std::ifstream File0;
+  File0.open(glauber_input_filename.c_str(),std::ios::in);
+  if(!File0){std::cout<<"No input file, exit..."<< std::endl; exit(1);}
+  
+  int number = 0;
+  while(!File0.eof())
+    {
+      File0.getline(buff,200);
+      if (!(*buff) || (*buff == '#')) {number ++; continue;}
+      iss = new istringstream(buff);
+      *iss >> a_ >> a ;
+      if(a_ == "matter_eta_plateau" ) {matter_eta_plateau = atof(a);} 
+      if(a_ == "matter_eta_fall" ) {matter_eta_fall = atof(a);} 
+      delete iss;
+      number++;
+    } 
+  File0.close();
+
+  std::cout << "matter eta plateau = " 
+            <<  matter_eta_plateau << std::endl ; 
+  std::cout << "matter eta fall = " 
+            <<  matter_eta_fall << std::endl ; 
+
+}
+
+
+initialisation::~initialisation(){
+  // Delete the array created
+  for (int ix = 0; ix < nx; ix++){
+    delete[] ncollxy[ix];
+  }
+  delete[] ncollxy; 
+}
+
+
+
+void initialisation::read_and_store_ncoll_profile(){
+
+  std::string dummy ;
+
+  std::ifstream ifile;
+  ifile.open(ncoll_profile_filename.c_str(), std::ios::in );
+  if(!ifile){
+    std::cout << "bulk information input" <<
+    " file not found ... " << std::endl ; 
+    exit(1);
+  }
+  // read the first line which contain grid info
+  ifile.getline(buff,350);
+
+
+  double maxcoll = 0 ;
+  for(int ix=0; ix<nx; ix++){
+    for(int iy=0; iy<ny; iy++){
+      ifile.getline(buff,350);
+      iss = new istringstream(buff);
+      *iss >> dummy >> dummy >> dummy >> dummy >> dummy >>
+          dummy >> dummy >> dummy >> dummy >> ncollxy[ix][iy] >> dummy >> 
+          dummy >> dummy >> dummy >> dummy >> dummy >> dummy ; 
+      delete iss;
+      if(ncollxy[ix][iy] > maxcoll){
+        maxcoll = ncollxy[ix][iy] ; 
+      }
+    }
+  }
+
+  std::cout << "max. ncoll(x,y) = " << maxcoll << std::endl ; 
+
+  // rescaling
+  double maxcoll2 = 0 ;
+  for(int ix=0; ix<nx; ix++){
+    for(int iy=0; iy<ny; iy++){
+      ncollxy[ix][iy] /= maxcoll ; 
+      if(ncollxy[ix][iy] > maxcoll2){
+        maxcoll2 = ncollxy[ix][iy] ; 
+      }
+    }
+  }
+
+  std::cout << "max. ncoll(x,y) after rescaling = " << maxcoll2 << std::endl ; 
+
+}
+
+
+double initialisation::interpolate_and_find_ncoll(double xx, double yy){
+  if(fabs(xx)>=fabs(xmin)){
+    return 0 ; 
+  }
+  if(fabs(yy)>=fabs(ymin)){
+    return 0 ; 
+  }
+  double x0 = xmin + floor_ix(xx) * dx ; // lower grid point in x   
+  double x1 = xmin + floor_ix(xx) * dx + dx ; // upper grid point in x   
+  double y0 = ymin + floor_iy(yy) * dy ; // lower grid point in y   
+  double y1 = ymin + floor_iy(yy) * dy + dy ; // upper grid point in y
+
+  int lowx_index = floor_ix(xx) ; 
+  int uppx_index = floor_ix(xx)+1 ; 
+  int lowy_index = floor_iy(yy) ; 
+  int uppy_index = floor_iy(yy)+1 ; 
+
+  double frac[2][2];
+  frac[0][0] = x1-xx ;    
+  frac[0][1] = y1-yy ;    
+  frac[1][0] = xx-x0 ;    
+  frac[1][1] = yy-y0 ;    
+
+  double Q[2][2];
+  Q[0][0]= ncollxy[lowx_index][lowy_index] ; 
+  Q[0][1]= ncollxy[lowx_index][uppy_index] ; 
+  Q[1][0]= ncollxy[uppx_index][lowy_index] ; 
+  Q[1][1]= ncollxy[uppx_index][uppy_index] ; 
+
+  double result = (frac[0][0]*frac[0][1]*Q[0][0]
+                 + frac[1][0]*frac[0][1]*Q[1][0]
+                 + frac[0][0]*frac[1][1]*Q[0][1]
+                 + frac[1][0]*frac[1][1]*Q[1][1])
+                 / (dx * dy) ; 
+  return result ; 
+}
+
+
+
+void initialisation::sample_and_assign_initial_positions_to_heavy_quarks(int nq, double* x, double* y, double* etas){
+
+  std::cout << "============================================" << std::endl ; 
+  std::cout << "=======  Pairs initialized together  =======" << std::endl ; 
+  std::cout << "============================================" << std::endl ; 
+
+  std::cout << "delta etas gap for c-cbar pair : " 
+            << iparam.delta_etas_gap 
+            << std::endl ; 
+
+
+  for(int ii=0; ii<nq; ii++){
+    x[ii]=0. ; 
+    y[ii]=0. ; 
+    etas[ii] = 0 ; 
+  }
+
+  // sampling the initial transverse position
+  double samp_x, samp_y, test ; 
+  int iq = 0 ; 
+  int counter = 0 ; 
+  while(iq < nq){
+    samp_x = 16*rand->rand_uniform()-8;
+    samp_y = 16*rand->rand_uniform()-8;
+    test = rand->rand_uniform();
+    if( test < interpolate_and_find_ncoll(samp_x,samp_y) ){
+      x[iq] = samp_x ; 
+      y[iq] = samp_y ; 
+      x[iq+1] = samp_x ; 
+      y[iq+1] = samp_y ; 
+      iq += 2 ;
+      counter = 0 ;  
+    }
+    else{ 
+     counter += 1 ;
+     if(counter > 10000){
+       std::cout << "so many trials but could not "  
+                 << "sample the initial position of a heavy quark ... " 
+                 << std::endl ; 
+       exit(1);
+     }
+     continue ; 
+    }
+  }
+
+
+  // sampling the initial space-time rapidity position //
+  double samp_etas, func, rand_shift  ; 
+  double range_etas = matter_eta_plateau + 2 * matter_eta_fall ; 
+  iq = 0 ; 
+  counter = 0 ; 
+  while(iq < nq){
+    samp_etas = 2*range_etas*rand->rand_uniform()-range_etas;
+    test = rand->rand_uniform();
+    func = exp( -pow(fabs(samp_etas) - matter_eta_plateau, 2) / ( 2 * pow(matter_eta_fall, 2))
+                   * theta( fabs(samp_etas)-matter_eta_plateau) );
+    if( test < func ){
+      rand_shift = rand->rand_uniform();
+      if(rand_shift <= 0.5){
+        etas[iq] = samp_etas - (iparam.delta_etas_gap/2.) ;
+        etas[iq+1] = samp_etas + (iparam.delta_etas_gap/2.);
+      }
+      else{
+        etas[iq] = samp_etas + (iparam.delta_etas_gap/2.) ;
+        etas[iq+1] = samp_etas - (iparam.delta_etas_gap/2.);
+      }
+      iq += 2 ;
+      counter = 0 ;  
+    }
+    else{ 
+     counter += 1 ;
+     if(counter > 10000){
+       std::cout << "so many trials but could not "  
+                 << "sample the initial position of a heavy quark ... " 
+                 << std::endl ; 
+       exit(1);
+     }
+     continue ; 
+    }
+  }
+
+
+}
+
+
+void initialisation::sample_and_assign_initial_momenta_to_heavy_quarks(int nq, double* pxx, double* pyy, double* pzz, int* pid, int* status,
+                        double* x, double* y, double* etas){
+
+  for(int ii=0; ii<nq; ii++){
+    pxx[ii]=0. ; 
+    pyy[ii]=0. ; 
+    pzz[ii] = 0 ; 
+    pid[ii] = 0 ; 
+    status[ii] = 0 ; 
+  }
+  
+  
+  /*
+  // sampling from a parametrized distribution
+  double samp_pt, test, func, phi, costh, sinth ; 
+  int iq = 0 ; 
+  int counter = 0 ; 
+  while(iq < nq){
+  samp_pt = 10.*rand2->rand_uniform();
+  test = rand2->rand_uniform();
+  func = parameterized_pt_dist_200GeV(samp_pt);
+  if( test < func ){
+  phi=(2*3.14)*rand2->rand_uniform();
+  costh=2.0*rand2->rand_uniform()-1.0;
+  sinth=sqrt(1-costh*costh);
+  pxx[iq] = samp_pt * cos(phi);
+  pyy[iq] = samp_pt * sin(phi);
+  pzz[iq] = samp_pt * costh / sinth;
+  iq += 1 ;
+  counter = 0 ;  
+  }
+  else{ 
+  counter += 1 ;
+  if(counter > 10000){
+  std::cout << "so many trials but could not "  
+  << "sample the initial momentum of a heavy quark ... " 
+  << std::endl ; 
+  exit(1);
+  }
+  continue ; 
+  }
+  }
+  */
+  
+  
+  // reading the initial momentum of charm quarks from PYTHIA generated file //
+  int Nevents ; 
+  std::ifstream file;
+  std::string path_for_input_file_to_be_read = iparam.pythia_file ; 
+  std::stringstream input_filename1;
+  input_filename1.str(std::string());
+  input_filename1 << path_for_input_file_to_be_read.c_str() ;
+  file.open(input_filename1.str().c_str());
+  if(!file){
+    std::cout << input_filename1.str().c_str() 
+	      << " : file not found." 
+	      << std::endl;
+    exit(1);
+  }
+  std::cout << "reading pythia file : " 
+	    << input_filename1.str().c_str() 
+	    << " ... " << std::endl ; 
+  
+  file.getline(buff,150) ;
+  iss = new istringstream(buff);
+  *iss >> Nevents ;
+  delete iss;
+  
+  // skip the header
+  file.getline(buff,200) ;
+  
+  int ieventidx, partpid, partstatus ; 
+  double dummy1, partpx, partpy, partpz ; 
+  double mothpx, mothpy, mothpz, pp, rap ; 
+  int temp_indx = 0 ;
+  ieventidx = 0 ;  
+  int TotalPairs = 10000000 ;
+  int ipairs = 0 ; 
+
+
+  while(ipairs < TotalPairs){
+      if (file.eof()) break;
+      file.getline(buff,150) ; // 1st of pair
+      iss = new istringstream(buff);
+      *iss >> ieventidx >> partpid >> partstatus >> dummy1 
+	   >> dummy1 >> dummy1 >> dummy1 >> mothpx 
+	   >> mothpy >> mothpz >> dummy1 >> dummy1 >> dummy1 >> dummy1 >> partpx 
+	   >> partpy >> partpz ;
+      delete iss;
+      pp = sqrt(partpx * partpx + partpy * partpy + partpz * partpz) ; 
+      rap = 0.5 * log( (sqrt(pp*pp + 1.5 * 1.5) + partpz) / (sqrt(pp*pp + 1.5 * 1.5) - partpz) ) ; 
+      status[temp_indx] = partstatus ; 
+      pxx[temp_indx] = partpx ; 
+      pyy[temp_indx] = partpy ; 
+      pzz[temp_indx] = partpz ; 
+      pid[temp_indx] = partpid ; 
+      
+      if(iparam.Do_evolve_primordial_ccbar_pair > 0){
+	pxx[temp_indx] = mothpx ; 
+	pyy[temp_indx] = mothpy ; 
+	pzz[temp_indx] = mothpz ; 
+      }
+      
+      if(iparam.Do_set_etas_assuming_boost_invariance > 0){
+	etas[temp_indx] = rap ; 
+      }
+      
+      temp_indx += 1 ; 
+      
+      if (file.eof()) break;
+      file.getline(buff,150) ; // 2nd of pair
+      iss = new istringstream(buff); 
+      *iss >> ieventidx >> partpid >> partstatus >> dummy1 
+	   >> dummy1 >> dummy1 >> dummy1 >> mothpx 
+	   >> mothpy >> mothpz >> dummy1 >> dummy1 >> dummy1 >> dummy1 >> partpx 
+	   >> partpy >> partpz ;
+      delete iss;
+      pp = sqrt(partpx * partpx + partpy * partpy + partpz * partpz) ; 
+      rap = 0.5 * log( (sqrt(pp*pp + 1.5 * 1.5) + partpz) / (sqrt(pp*pp + 1.5 * 1.5) - partpz) ) ; 
+      status[temp_indx] = partstatus ; 
+      pxx[temp_indx] = partpx ; 
+      pyy[temp_indx] = partpy ; 
+      pzz[temp_indx] = partpz ; 
+      pid[temp_indx] = partpid ; 
+      
+      if(iparam.Do_evolve_primordial_ccbar_pair > 0){
+	pxx[temp_indx] = mothpx ; 
+	pyy[temp_indx] = mothpy ; 
+	pzz[temp_indx] = mothpz ; 
+      }
+      
+      if(iparam.Do_set_etas_assuming_boost_invariance > 0){
+	etas[temp_indx] = rap ; 
+      }
+      
+      temp_indx += 1 ;
+      ipairs += 1 ;  
+      
+  } // ii loop
+  file.close() ; 
+  
+}
+
+
+double initialisation::parameterized_pt_dist_200GeV(double pt){
+  return pow(1 + 0.128571 * pt, -15.44);
+}
+
+
+int initialisation::theta(double xx){
+  if(xx < 0 ){
+    return 0;
+  }
+  else{
+    return 1;
+  }
+}
+
+
+int initialisation::get_no_of_heavy_quarks_to_be_evolved(){
+
+  int Nquarks = 0 ; 
+  int Nevents ; 
+  std::ifstream file;
+  std::string path_for_input_file_to_be_read = iparam.pythia_file ; 
+  std::stringstream input_filename1;
+  input_filename1.str(std::string());
+  input_filename1 << path_for_input_file_to_be_read.c_str() ;
+  file.open(input_filename1.str().c_str());
+  if(!file){
+    std::cout << input_filename1.str().c_str() 
+         << " : file not found." 
+           << std::endl;
+    exit(1);
+  }
+  std::cout << "reading pythia file to calculate no of quarks : " 
+     << input_filename1.str().c_str() 
+       << " ... " << std::endl ; 
+    
+  file.getline(buff,150) ;
+  iss = new istringstream(buff);
+  *iss >> Nevents ;
+  delete iss;
+
+  // skip the header
+  file.getline(buff,200) ;
+
+  int TotalPairs = 10000000 ;
+  int ipairs = 0 ; 
+  while(ipairs < TotalPairs){
+
+    // first of the pair
+    if (file.eof()) break;
+    file.getline(buff,150) ;
+    Nquarks += 1 ; 
+
+    // second of the pair
+    if (file.eof()) break;
+    file.getline(buff,150) ;
+    Nquarks += 1 ;
+
+    ipairs += 1 ; 
+  }
+
+  file.close();
+  return Nquarks ; 
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

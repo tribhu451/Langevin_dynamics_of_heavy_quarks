@@ -1,0 +1,13 @@
+nquarks 100000
+g0 
+t0
+p0
+dt
+bulk_file  
+ncoll_prof_file  
+glauber_input_file 
+Do_evolve_primordial_ccbar_pair
+Do_set_etas_assuming_boost_invariance
+pythia_file 
+
+end 1
